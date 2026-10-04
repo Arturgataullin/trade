@@ -1,6 +1,18 @@
 from fastapi import FastAPI
 
-app = FastAPI(title="Exchange Simulator")
+from backend.app.api.routes.auth import router as auth_router
+
+
+app = FastAPI(
+    title="Exchange Simulator",
+)
+
+
+app.include_router(
+    auth_router,
+    prefix="/api",
+)
+
 
 @app.get("/health")
 def health():

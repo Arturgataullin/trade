@@ -19,6 +19,7 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 
+from backend.app import models  # noqa: F401
 from backend.app.core.config import settings
 from backend.app.db.base import Base
 
