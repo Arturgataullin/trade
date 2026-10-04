@@ -7,6 +7,7 @@ from backend.app.core.security import create_access_token
 from backend.app.db.dependencies import get_db
 from backend.app.schemas.auth import LoginRequest, Token, UserCreate
 from backend.app.schemas.user import UserRead
+from backend.app.api.dependencies import CurrentUser
 from backend.app.services.auth import (
     EmailAlreadyRegisteredError,
     authenticate_user,
@@ -72,4 +73,15 @@ def login(
 
     return Token(
         access_token=access_token,
+    )
+
+@router.get(
+    "/me",
+    response_model=UserRead,
+)
+def read_current_user(
+    current_user: CurrentUser,
+) -> UserRead:
+    return UserRead.model_validate(
+        current_user
     )
