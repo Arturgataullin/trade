@@ -50,6 +50,7 @@ def register_user(
     user = User(
         email=normalized_email,
         hashed_password=hash_password(data.password),
+        role="user",
     )
 
     db.add(user)
