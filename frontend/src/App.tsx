@@ -1,17 +1,24 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import "./App.css";
+import { AdminPanel } from "./AdminPanel";
+import { MarketCatalog } from "./MarketCatalog";
+import { SimulationsPanel } from "./SimulationsPanel";
 import {
   apiRequest,
+  type Asset,
+  type Instrument,
   type TokenResponse,
   type User,
-  type UserRole,
 } from "./api";
+
 
 const TOKEN_KEY = "exchange-simulator-token";
 
 type AuthMode = "login" | "register";
+type DashboardSection = "experiments" | "market" | "profile" | "admin";
+
 
 function AuthScreen({
   notice,
@@ -26,6 +33,20 @@ function AuthScreen({
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
+
+  useEffect(() => {
+    apiRequest<Instrument[]>("/api/instruments")
+      .then((items) =>
+        setInstruments(
+          items.filter(
+            (item) =>
+              item.is_active && item.base_asset.is_active && item.quote_asset.is_active,
+          ),
+        ),
+      )
+      .catch(() => setInstruments([]));
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -78,10 +99,16 @@ function AuthScreen({
           Создавайте воспроизводимые конфигурации рынка и проверяйте стратегии
           на виртуальных активах.
         </p>
-        <div className="feature-list" aria-label="Возможности системы">
-          <span>Воспроизводимые сценарии</span>
-          <span>Виртуальные активы</span>
-          <span>Контроль доступа</span>
+        <div className="feature-list" aria-label="Доступные инструменты">
+          {instruments.length > 0 ? (
+            instruments.map((instrument) => (
+              <span key={instrument.id}>
+                {instrument.base_asset.symbol}/{instrument.quote_asset.symbol}
+              </span>
+            ))
+          ) : (
+            <span>Виртуальный рынок</span>
+          )}
         </div>
       </section>
 
@@ -171,123 +198,43 @@ function AuthScreen({
   );
 }
 
-function AdminPanel({ token, currentUser }: { token: string; currentUser: User }) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [savingId, setSavingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    apiRequest<User[]>("/api/users", {}, token)
-      .then((data) => {
-        if (active) setUsers(data);
-      })
-      .catch((requestError) => {
-        if (active) {
-          setError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Не удалось загрузить пользователей",
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+function Dashboard({
+  user,
+  token,
+  onLogout,
+}: {
+  user: User;
+  token: string;
+  onLogout: () => void;
+}) {
+  const [section, setSection] = useState<DashboardSection>("experiments");
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [catalogError, setCatalogError] = useState("");
 
-    return () => {
-      active = false;
-    };
-  }, [token]);
-
-  async function updateRole(user: User, role: UserRole) {
-    setSavingId(user.id);
-    setError("");
+  const loadCatalog = useCallback(async () => {
     try {
-      const updated = await apiRequest<User>(
-        `/api/users/${user.id}/role`,
-        { method: "PUT", body: JSON.stringify({ role }) },
-        token,
-      );
-      setUsers((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
+      const [assetItems, instrumentItems] = await Promise.all([
+        apiRequest<Asset[]>("/api/assets"),
+        apiRequest<Instrument[]>("/api/instruments"),
+      ]);
+      setAssets(assetItems);
+      setInstruments(instrumentItems);
+      setCatalogError("");
     } catch (requestError) {
-      setError(
+      setCatalogError(
         requestError instanceof Error
           ? requestError.message
-          : "Не удалось изменить роль",
+          : "Не удалось загрузить справочник рынка",
       );
-    } finally {
-      setSavingId(null);
     }
-  }
+  }, []);
 
-  return (
-    <section className="panel admin-panel">
-      <div className="panel-heading">
-        <div>
-          <span className="eyebrow">Администрирование</span>
-          <h2>Пользователи и роли</h2>
-        </div>
-        <span className="count-badge">{users.length}</span>
-      </div>
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
-      {error && <div className="form-error">{error}</div>}
-      {loading ? (
-        <p className="muted">Загрузка пользователей…</p>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Пользователь</th>
-                <th>Статус</th>
-                <th>Роль</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id}>
-                  <td>
-                    <strong>{user.email}</strong>
-                    <span className="user-meta">
-                      ID {user.id}
-                      {user.id === currentUser.id ? " · текущий аккаунт" : ""}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`status-dot ${user.is_active ? "on" : ""}`} />
-                    {user.is_active ? "Активен" : "Отключён"}
-                  </td>
-                  <td>
-                    <select
-                      aria-label={`Роль пользователя ${user.email}`}
-                      disabled={savingId === user.id || user.id === currentUser.id}
-                      onChange={(event) =>
-                        updateRole(user, event.target.value as UserRole)
-                      }
-                      value={user.role}
-                    >
-                      <option value="user">Пользователь</option>
-                      <option value="admin">Администратор</option>
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="panel-note">
-        Роль текущего аккаунта нельзя изменить из этого интерфейса.
-      </p>
-    </section>
-  );
-}
-
-function Dashboard({ user, token, onLogout }: { user: User; token: string; onLogout: () => void }) {
   return (
     <div className="dashboard">
       <header className="topbar">
@@ -296,6 +243,30 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
           <strong>Exchange Simulator</strong>
           <span>Панель управления</span>
         </div>
+        <nav className="main-nav" aria-label="Разделы">
+          <NavButton
+            active={section === "experiments"}
+            label="Эксперименты"
+            onClick={() => setSection("experiments")}
+          />
+          <NavButton
+            active={section === "market"}
+            label="Инструменты"
+            onClick={() => setSection("market")}
+          />
+          <NavButton
+            active={section === "profile"}
+            label="Профиль"
+            onClick={() => setSection("profile")}
+          />
+          {user.role === "admin" && (
+            <NavButton
+              active={section === "admin"}
+              label="Администрирование"
+              onClick={() => setSection("admin")}
+            />
+          )}
+        </nav>
         <div className="account-summary">
           <div>
             <strong>{user.email}</strong>
@@ -308,41 +279,70 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
       </header>
 
       <main className="dashboard-content">
-        <section className="welcome-block">
-          <span className="eyebrow">Личный кабинет</span>
-          <h1>Добро пожаловать</h1>
-          <p>
-            Авторизация настроена. Следующим шагом здесь появятся торговые
-            инструменты и конфигурации экспериментов.
-          </p>
-        </section>
+        {catalogError && <div className="form-error">{catalogError}</div>}
 
-        <section className="panel profile-panel">
-          <div>
-            <span className="eyebrow">Учётная запись</span>
-            <h2>{user.email}</h2>
-          </div>
-          <dl>
-            <div>
-              <dt>Роль</dt>
-              <dd>{user.role === "admin" ? "Администратор" : "Пользователь"}</dd>
-            </div>
-            <div>
-              <dt>Статус</dt>
-              <dd>{user.is_active ? "Активен" : "Отключён"}</dd>
-            </div>
-            <div>
-              <dt>Создан</dt>
-              <dd>{new Date(user.created_at).toLocaleDateString("ru-RU")}</dd>
-            </div>
-          </dl>
-        </section>
-
-        {user.role === "admin" && <AdminPanel token={token} currentUser={user} />}
+        {section === "experiments" && (
+          <SimulationsPanel instruments={instruments} token={token} />
+        )}
+        {section === "market" && <MarketCatalog instruments={instruments} />}
+        {section === "profile" && <ProfilePanel user={user} />}
+        {section === "admin" && user.role === "admin" && (
+          <AdminPanel
+            assets={assets}
+            currentUser={user}
+            instruments={instruments}
+            onCatalogChanged={loadCatalog}
+            token={token}
+          />
+        )}
       </main>
     </div>
   );
 }
+
+
+function NavButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button className={active ? "active" : ""} onClick={onClick} type="button">
+      {label}
+    </button>
+  );
+}
+
+
+function ProfilePanel({ user }: { user: User }) {
+  return (
+    <section className="panel profile-panel">
+      <div>
+        <span className="eyebrow">Учётная запись</span>
+        <h2>{user.email}</h2>
+      </div>
+      <dl>
+        <div>
+          <dt>Роль</dt>
+          <dd>{user.role === "admin" ? "Администратор" : "Пользователь"}</dd>
+        </div>
+        <div>
+          <dt>Статус</dt>
+          <dd>{user.is_active ? "Активен" : "Отключён"}</dd>
+        </div>
+        <div>
+          <dt>Создан</dt>
+          <dd>{new Date(user.created_at).toLocaleDateString("ru-RU")}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() =>
@@ -355,6 +355,7 @@ export default function App() {
   useEffect(() => {
     let active = true;
     if (!token) {
+      setRestoring(false);
       return;
     }
 

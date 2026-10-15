@@ -13,6 +13,74 @@ export type TokenResponse = {
   token_type: "bearer";
 };
 
+export type Asset = {
+  id: number;
+  symbol: string;
+  name: string;
+  is_active: boolean;
+};
+
+export type Instrument = {
+  id: number;
+  base_asset_id: number;
+  quote_asset_id: number;
+  is_active: boolean;
+  base_asset: Asset;
+  quote_asset: Asset;
+};
+
+export type StrategyType = "random" | "trend_following";
+
+export type StrategyParameters = {
+  strategy_type: StrategyType;
+  buy_probability: number | null;
+  sell_probability: number | null;
+  hold_probability: number | null;
+  price_deviation_pct: number | null;
+  trend_window: number | null;
+  trend_threshold_pct: number | null;
+};
+
+export type BackgroundStrategyProfile = StrategyParameters & {
+  id?: number;
+  agent_count: number;
+};
+
+export type TestStrategy = StrategyParameters & {
+  id?: number;
+};
+
+export type SimulationInstrument = {
+  id?: number;
+  instrument_id: number;
+  initial_price: number;
+  background_initial_base_balance: number;
+  test_initial_base_balance: number;
+  instrument?: Instrument;
+};
+
+export type SimulationPayload = {
+  name: string;
+  duration_steps: number;
+  seed: number;
+  background_initial_quote_balance: number;
+  background_min_order_volume: number;
+  background_max_order_volume: number;
+  test_initial_quote_balance: number;
+  test_min_order_volume: number;
+  test_max_order_volume: number;
+  instrument_configs: SimulationInstrument[];
+  background_profiles: BackgroundStrategyProfile[];
+  test_strategy: TestStrategy;
+};
+
+export type Simulation = SimulationPayload & {
+  id: number;
+  owner_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
 function errorMessage(payload: unknown, status: number): string {
   if (payload && typeof payload === "object" && "detail" in payload) {
     const detail = payload.detail;

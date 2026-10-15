@@ -76,6 +76,15 @@ python -m pip install -r backend/requirements.txt
 python -m alembic upgrade head
 ```
 
+Загрузить воспроизводимый демонстрационный справочник рынка с активами BTC, ETH,
+USD и инструментами BTC/USD, ETH/USD:
+
+```powershell
+python -m backend.scripts.seed_market
+```
+
+Команду можно запускать повторно — дубликаты не создаются.
+
 ### 5. Установить зависимости frontend
 
 ```bash
@@ -127,6 +136,24 @@ docker compose exec db psql -U exchange_user -d exchange_simulator
 -- Показать структуру таблицы пользователей
 \d users
 
+-- Показать виртуальные активы
+SELECT id, symbol, name, is_active FROM assets ORDER BY symbol;
+
+-- Показать торговые инструменты
+SELECT
+    instruments.id,
+    base.symbol || '/' || quote.symbol AS symbol,
+    instruments.is_active
+FROM instruments
+JOIN assets AS base ON base.id = instruments.base_asset_id
+JOIN assets AS quote ON quote.id = instruments.quote_asset_id
+ORDER BY instruments.id;
+
+-- Показать сохранённые эксперименты
+SELECT id, owner_id, name, duration_steps, seed, updated_at
+FROM simulations
+ORDER BY id;
+
 -- Показать пользователей без хэшей паролей
 SELECT id, email, role, is_active, created_at
 FROM users
@@ -167,6 +194,34 @@ python -m backend.scripts.promote_admin admin@example.com
 `GET /api/auth/me`. Без действительного токена сервер отвечает `401`, а
 пользователю без роли администратора возвращает `403`.
 
+## Возможности первого этапа
+
+После регистрации и входа пользователь может через web-интерфейс:
+
+- просмотреть доступные торговые инструменты;
+- создать конфигурацию эксперимента с одним или двумя инструментами;
+- задать продолжительность, seed, начальные цены, балансы и объёмы заявок;
+- добавить несколько фоновых профилей Random и Trend Following;
+- отдельно настроить тестируемую стратегию;
+- сохранить, повторно открыть и изменить свою конфигурацию.
+
+Пользователь не может открыть конфигурацию другого пользователя. Администратору
+доступны управление ролями, виртуальными активами и торговыми инструментами.
+
+Основные маршруты конфигураций:
+
+```text
+GET  /api/assets
+GET  /api/instruments
+POST /api/simulations
+GET  /api/simulations
+GET  /api/simulations/{id}
+PUT  /api/simulations/{id}
+```
+
+Создание и изменение активов и инструментов выполняется администратором через
+`POST` и `PUT` маршруты `/api/assets` и `/api/instruments`.
+
 ## Остановка PostgreSQL
 
 Остановить контейнер, сохранив данные в Docker volume:
@@ -174,9 +229,13 @@ python -m backend.scripts.promote_admin admin@example.com
 ```bash
 docker compose down
 ```
-201 — пользователь зарегистрирован;
-401 — не удалось подтвердить личность: неправильный пароль, неактивный пользователь, отсутствующий или просроченный JWT;
-403 — личность подтверждена, но не хватает прав;
-404 — пользователь с указанным ID не найден;
-409 — email уже зарегистрирован;
-422 — данные не прошли проверку, например некорректный email или короткий пароль.
+
+## Основные HTTP-коды
+
+- `201` — ресурс успешно создан;
+- `401` — не удалось подтвердить личность: неправильный пароль, неактивный
+  пользователь, отсутствующий или просроченный JWT;
+- `403` — личность подтверждена, но не хватает прав;
+- `404` — запрошенный ресурс не найден или не принадлежит пользователю;
+- `409` — ресурс с таким уникальным значением уже существует;
+- `422` — данные не прошли проверку.
