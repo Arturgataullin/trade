@@ -18,7 +18,3 @@ app.include_router(
     prefix="/api",
 )
 
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}

@@ -106,6 +106,45 @@ npm --prefix frontend run dev
 - проверка backend: <http://localhost:8000/health>;
 - Swagger UI: <http://localhost:8000/docs>.
 
+## Просмотр содержимого базы данных
+
+PostgreSQL работает внутри контейнера `db`. Чтобы открыть интерактивную консоль
+`psql`, выполните из корня проекта:
+
+```powershell
+docker compose exec db psql -U exchange_user -d exchange_simulator
+```
+
+Если значения `POSTGRES_USER` или `POSTGRES_DB` были изменены в `.env`, замените
+`exchange_user` и `exchange_simulator` в команде на свои значения.
+
+Основные команды внутри `psql`:
+
+```sql
+-- Показать таблицы базы данных
+\dt
+
+-- Показать структуру таблицы пользователей
+\d users
+
+-- Показать пользователей без хэшей паролей
+SELECT id, email, role, is_active, created_at
+FROM users
+ORDER BY id;
+
+-- Показать применённую версию миграций Alembic
+SELECT * FROM alembic_version;
+
+-- Выйти из psql
+\q
+```
+
+Отдельный запрос можно выполнить без входа в интерактивную консоль:
+
+```powershell
+docker compose exec db psql -U exchange_user -d exchange_simulator -c "SELECT id, email, role, is_active, created_at FROM users ORDER BY id;"
+```
+
 ## Роли пользователей
 
 После обновления кода примените новую миграцию:
@@ -135,3 +174,9 @@ python -m backend.scripts.promote_admin admin@example.com
 ```bash
 docker compose down
 ```
+201 — пользователь зарегистрирован;
+401 — не удалось подтвердить личность: неправильный пароль, неактивный пользователь, отсутствующий или просроченный JWT;
+403 — личность подтверждена, но не хватает прав;
+404 — пользователь с указанным ID не найден;
+409 — email уже зарегистрирован;
+422 — данные не прошли проверку, например некорректный email или короткий пароль.
