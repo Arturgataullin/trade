@@ -10,6 +10,7 @@ from backend.app.models.simulation import (
     SimulationInstrument,
     TestStrategy,
 )
+from backend.app.models.simulation_run import SimulationRun
 from backend.app.schemas.simulation import SimulationWrite, StrategyParameters
 
 
@@ -19,6 +20,10 @@ class SimulationNotFoundError(Exception):
 
 class InvalidSimulationConfigurationError(Exception):
     """Raised when referenced instruments cannot form a valid market."""
+
+
+class SimulationRunningError(Exception):
+    """Raised when a running experiment configuration is edited."""
 
 
 def _decimal(value: float) -> Decimal:
@@ -83,6 +88,15 @@ def update_simulation(
     data: SimulationWrite,
 ) -> Simulation:
     simulation = get_simulation(db, simulation_id, owner_id)
+    active_run_id = db.scalar(
+        select(SimulationRun.id).where(
+            SimulationRun.simulation_id == simulation_id,
+            SimulationRun.status == "running",
+        )
+    )
+    if active_run_id is not None:
+        raise SimulationRunningError
+
     instruments = _validate_instruments(db, data)
 
     simulation.instrument_configs.clear()

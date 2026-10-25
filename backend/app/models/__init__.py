@@ -6,6 +6,12 @@ from backend.app.models.simulation import (
     SimulationInstrument,
     TestStrategy,
 )
+from backend.app.models.simulation_run import (
+    ParticipantBalance,
+    SimulationParticipant,
+    SimulationRun,
+    SimulationRunInstrument,
+)
 from backend.app.models.user import User
 
 
@@ -13,8 +19,12 @@ __all__ = [
     "Asset",
     "BackgroundStrategyProfile",
     "Instrument",
+    "ParticipantBalance",
     "Simulation",
     "SimulationInstrument",
+    "SimulationParticipant",
+    "SimulationRun",
+    "SimulationRunInstrument",
     "TestStrategy",
     "User",
 ]

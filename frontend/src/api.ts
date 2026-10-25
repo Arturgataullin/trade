@@ -81,6 +81,25 @@ export type Simulation = SimulationPayload & {
   updated_at: string;
 };
 
+export type SimulationRunStatus =
+  | "running"
+  | "stopped"
+  | "completed"
+  | "failed";
+
+export type SimulationRun = {
+  id: number;
+  simulation_id: number;
+  status: SimulationRunStatus;
+  current_step: number;
+  total_steps: number;
+  seed: number;
+  engine_version: string;
+  stop_requested: boolean;
+  started_at: string;
+  finished_at: string | null;
+};
+
 function errorMessage(payload: unknown, status: number): string {
   if (payload && typeof payload === "object" && "detail" in payload) {
     const detail = payload.detail;

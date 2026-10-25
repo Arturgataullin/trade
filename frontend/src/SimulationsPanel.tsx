@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
-import { apiRequest, type Instrument, type Simulation } from "./api";
+import {
+  apiRequest,
+  type Instrument,
+  type Simulation,
+  type SimulationRun,
+} from "./api";
 import { SimulationForm } from "./SimulationForm";
 
 
@@ -15,12 +20,31 @@ export function SimulationsPanel({
   const [editing, setEditing] = useState<Simulation | null | "new">(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [runs, setRuns] = useState<Record<number, SimulationRun | null>>({});
+  const [runPendingId, setRunPendingId] = useState<number | null>(null);
 
   useEffect(() => {
     let active = true;
     apiRequest<Simulation[]>("/api/simulations", {}, token)
-      .then((data) => {
-        if (active) setSimulations(data);
+      .then(async (data) => {
+        if (!active) return;
+        setSimulations(data);
+        const latestRuns = await Promise.all(
+          data.map((simulation) =>
+            apiRequest<SimulationRun | null>(
+              `/api/simulations/${simulation.id}/run`,
+              {},
+              token,
+            ),
+          ),
+        );
+        if (active) {
+          setRuns(
+            Object.fromEntries(
+              data.map((simulation, index) => [simulation.id, latestRuns[index]]),
+            ),
+          );
+        }
       })
       .catch((requestError) => {
         if (active) {
@@ -55,6 +79,48 @@ export function SimulationsPanel({
           ? requestError.message
           : "Не удалось открыть эксперимент",
       );
+    }
+  }
+
+  async function startRun(simulationId: number) {
+    setRunPendingId(simulationId);
+    setError("");
+    try {
+      const run = await apiRequest<SimulationRun>(
+        `/api/simulations/${simulationId}/start`,
+        { method: "POST" },
+        token,
+      );
+      setRuns((current) => ({ ...current, [simulationId]: run }));
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось запустить эксперимент",
+      );
+    } finally {
+      setRunPendingId(null);
+    }
+  }
+
+  async function stopRun(simulationId: number) {
+    setRunPendingId(simulationId);
+    setError("");
+    try {
+      const run = await apiRequest<SimulationRun>(
+        `/api/simulations/${simulationId}/stop`,
+        { method: "POST" },
+        token,
+      );
+      setRuns((current) => ({ ...current, [simulationId]: run }));
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Не удалось остановить эксперимент",
+      );
+    } finally {
+      setRunPendingId(null);
     }
   }
 
@@ -115,7 +181,9 @@ export function SimulationsPanel({
         </div>
       ) : (
         <div className="simulation-grid">
-          {simulations.map((simulation) => (
+          {simulations.map((simulation) => {
+            const run = runs[simulation.id];
+            return (
             <article className="simulation-card" key={simulation.id}>
               <div>
                 <span className="user-meta">Эксперимент #{simulation.id}</span>
@@ -139,17 +207,56 @@ export function SimulationsPanel({
                   </span>
                 ))}
               </div>
-              <button
-                className="secondary-button"
-                onClick={() => openSimulation(simulation.id)}
-                type="button"
-              >
-                Открыть и изменить
-              </button>
+              {run && (
+                <span className="user-meta">
+                  Запуск #{run.id}: {runStatusLabel(run.status)}, шаг {run.current_step}/
+                  {run.total_steps}
+                </span>
+              )}
+              <div className="card-actions">
+                <button
+                  className="secondary-button"
+                  disabled={run?.status === "running"}
+                  onClick={() => openSimulation(simulation.id)}
+                  type="button"
+                >
+                  Открыть и изменить
+                </button>
+                {run?.status === "running" ? (
+                  <button
+                    className="danger-link"
+                    disabled={runPendingId === simulation.id}
+                    onClick={() => stopRun(simulation.id)}
+                    type="button"
+                  >
+                    Остановить
+                  </button>
+                ) : (
+                  <button
+                    className="primary-button"
+                    disabled={runPendingId === simulation.id}
+                    onClick={() => startRun(simulation.id)}
+                    type="button"
+                  >
+                    Запустить
+                  </button>
+                )}
+              </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
   );
+}
+
+
+function runStatusLabel(status: SimulationRun["status"]): string {
+  return {
+    running: "выполняется",
+    stopped: "остановлен",
+    completed: "завершён",
+    failed: "ошибка",
+  }[status];
 }

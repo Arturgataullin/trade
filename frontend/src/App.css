@@ -449,6 +449,13 @@ select:focus {
   justify-self: start;
 }
 
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
 .simulation-form {
   gap: 18px;
 }
