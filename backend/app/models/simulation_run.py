@@ -100,6 +100,10 @@ class SimulationRun(Base):
         order_by="SimulationParticipant.sequence_number",
     )
 
+    @property
+    def instrument_ids(self) -> list[int]:
+        return sorted(item.instrument_id for item in self.instruments)
+
 
 class SimulationRunInstrument(Base):
     __tablename__ = "simulation_run_instruments"

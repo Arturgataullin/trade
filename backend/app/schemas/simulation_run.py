@@ -19,5 +19,6 @@ class SimulationRunRead(BaseModel):
     started_at: datetime
     finished_at: datetime | None
     error_message: str | None
+    instrument_ids: list[int]
 
     model_config = ConfigDict(from_attributes=True)

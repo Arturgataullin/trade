@@ -76,7 +76,7 @@ def calculate_results(db: Session, run: SimulationRun) -> SimulationResultsRead:
         or_(buy.participant_id == participant.id, sell.participant_id == participant.id),
     ))
     return SimulationResultsRead(
-        run_id=run.id, status=run.status,
+        run_id=run.id, status=run.status, error_message=run.error_message,
         current_step=run.current_step, total_steps=run.total_steps,
         quote_asset_id=quote_asset_id, test_participant_id=participant.id,
         initial_portfolio_value=initial, portfolio_value=current, profit=profit,

@@ -138,6 +138,18 @@ class SimulationApiTests(unittest.TestCase):
         self.assertEqual(book["bids"], [])
         self.assertEqual(self.request("GET", "/api/simulations/1/results?run_id=999", self.token)[0], 404)
 
+    def test_run_instruments_survive_changes_to_the_template(self):
+        status, run = self.request("GET", "/api/simulations/1/run", self.token)
+        self.assertEqual(status, 200)
+        # The fixture's template has no instruments; its actual run has two.
+        self.assertEqual(run["instrument_ids"], [1, 2])
+
+    def test_stale_monitor_cannot_stop_another_run(self):
+        status, _ = self.request("POST", "/api/simulations/1/stop?run_id=999", self.token)
+        self.assertEqual(status, 409)
+        _, run = self.request("GET", "/api/simulations/1/run", self.token)
+        self.assertEqual(run["status"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,262 +1,165 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import {
-  apiRequest,
-  type Instrument,
-  type Simulation,
-  type SimulationRun,
-} from "./api";
+import { apiRequest, type Instrument, type Simulation, type SimulationRun } from "./api";
 import { SimulationForm } from "./SimulationForm";
+import { SimulationMonitor } from "./SimulationMonitor";
+import { newerRun, runStatusLabel } from "./simulationDisplay";
 
 
-export function SimulationsPanel({
-  token,
-  instruments,
-}: {
-  token: string;
-  instruments: Instrument[];
-}) {
+export function SimulationsPanel({ token, instruments }: { token: string; instruments: Instrument[] }) {
   const [simulations, setSimulations] = useState<Simulation[]>([]);
   const [editing, setEditing] = useState<Simulation | null | "new">(null);
+  const [monitoring, setMonitoring] = useState<{ simulation: Simulation; run: SimulationRun } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [pollError, setPollError] = useState("");
   const [runs, setRuns] = useState<Record<number, SimulationRun | null>>({});
-  const [runPendingId, setRunPendingId] = useState<number | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const updateRun = useCallback((run: SimulationRun) => {
+    setRuns((current) => ({
+      ...current, [run.simulation_id]: newerRun(current[run.simulation_id], run),
+    }));
+  }, []);
 
   useEffect(() => {
-    let active = true;
-    apiRequest<Simulation[]>("/api/simulations", {}, token)
-      .then(async (data) => {
-        if (!active) return;
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const data = await apiRequest<Simulation[]>("/api/simulations", { signal: controller.signal }, token);
+        const latestRuns = await Promise.all(data.map((simulation) =>
+          apiRequest<SimulationRun | null>(`/api/simulations/${simulation.id}/run`, { signal: controller.signal }, token),
+        ));
+        if (controller.signal.aborted) return;
         setSimulations(data);
-        const latestRuns = await Promise.all(
-          data.map((simulation) =>
-            apiRequest<SimulationRun | null>(
-              `/api/simulations/${simulation.id}/run`,
-              {},
-              token,
-            ),
-          ),
-        );
-        if (active) {
-          setRuns(
-            Object.fromEntries(
-              data.map((simulation, index) => [simulation.id, latestRuns[index]]),
-            ),
-          );
-        }
-      })
-      .catch((requestError) => {
-        if (active) {
-          setError(
-            requestError instanceof Error
-              ? requestError.message
-              : "Не удалось загрузить эксперименты",
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
+        setRuns(Object.fromEntries(data.map((simulation, index) => [simulation.id, latestRuns[index]])));
+      } catch (cause) {
+        if (!controller.signal.aborted) setError(message(cause));
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    void load();
+    return () => controller.abort();
   }, [token]);
+
+  const runningIds = Object.values(runs).filter((run) => run?.status === "running")
+    .map((run) => run!.simulation_id).sort((a, b) => a - b).join(",");
+  const hidden = Boolean(editing || monitoring);
+  useEffect(() => {
+    if (!runningIds || hidden) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function tick() {
+      try {
+        const updates = await Promise.all(runningIds.split(",").map((id) =>
+          apiRequest<SimulationRun | null>(`/api/simulations/${id}/run`, { signal: controller.signal }, token),
+        ));
+        if (controller.signal.aborted) return;
+        updates.forEach((run) => { if (run) updateRun(run); });
+        setPollError("");
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        setPollError(message(cause));
+      }
+      if (!controller.signal.aborted) timer = setTimeout(tick, 1000);
+    }
+    void tick();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [runningIds, hidden, token, updateRun]);
 
   async function openSimulation(id: number) {
     setError("");
+    setPending(true);
     try {
-      const simulation = await apiRequest<Simulation>(
-        `/api/simulations/${id}`,
-        {},
-        token,
-      );
-      setEditing(simulation);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Не удалось открыть эксперимент",
-      );
-    }
+      setEditing(await apiRequest<Simulation>(`/api/simulations/${id}`, {}, token));
+    } catch (cause) { setError(message(cause)); }
+    finally { setPending(false); }
   }
 
-  async function startRun(simulationId: number) {
-    setRunPendingId(simulationId);
+  async function startRun(simulation: Simulation) {
+    setPending(true);
     setError("");
     try {
-      const run = await apiRequest<SimulationRun>(
-        `/api/simulations/${simulationId}/start`,
-        { method: "POST" },
-        token,
-      );
-      setRuns((current) => ({ ...current, [simulationId]: run }));
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Не удалось запустить эксперимент",
-      );
-    } finally {
-      setRunPendingId(null);
-    }
+      const run = await apiRequest<SimulationRun>(`/api/simulations/${simulation.id}/start`, { method: "POST" }, token);
+      updateRun(run);
+      setMonitoring({ simulation, run });
+    } catch (cause) { setError(message(cause)); }
+    finally { setPending(false); }
   }
 
   async function stopRun(simulationId: number) {
-    setRunPendingId(simulationId);
+    setPending(true);
     setError("");
     try {
-      const run = await apiRequest<SimulationRun>(
-        `/api/simulations/${simulationId}/stop`,
-        { method: "POST" },
-        token,
-      );
-      setRuns((current) => ({ ...current, [simulationId]: run }));
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Не удалось остановить эксперимент",
-      );
-    } finally {
-      setRunPendingId(null);
-    }
+      updateRun(await apiRequest<SimulationRun>(`/api/simulations/${simulationId}/stop`, { method: "POST" }, token));
+    } catch (cause) { setError(message(cause)); }
+    finally { setPending(false); }
   }
 
-  if (editing) {
-    return (
-      <SimulationForm
-        instruments={instruments}
-        onCancel={() => setEditing(null)}
-        onSaved={(saved) => {
-          setSimulations((current) => {
-            const exists = current.some((item) => item.id === saved.id);
-            return exists
-              ? current.map((item) => (item.id === saved.id ? saved : item))
-              : [saved, ...current];
-          });
-          setEditing(null);
-        }}
-        simulation={editing === "new" ? null : editing}
-        token={token}
-      />
-    );
-  }
-
-  const activeInstruments = instruments.filter(
-    (item) => item.is_active && item.base_asset.is_active && item.quote_asset.is_active,
+  if (monitoring) return (
+    <SimulationMonitor key={monitoring.run.id} token={token} instruments={instruments}
+      simulation={monitoring.simulation} run={monitoring.run}
+      onBack={() => setMonitoring(null)} onRunChanged={updateRun} />
   );
 
+  if (editing) return (
+    <SimulationForm instruments={instruments} token={token}
+      simulation={editing === "new" ? null : editing}
+      onCancel={() => setEditing(null)}
+      onSaved={(saved) => {
+        setSimulations((current) => current.some((item) => item.id === saved.id)
+          ? current.map((item) => item.id === saved.id ? saved : item) : [saved, ...current]);
+        setEditing(null);
+      }} />
+  );
+
+  const canCreate = instruments.some((i) => i.is_active && i.base_asset.is_active && i.quote_asset.is_active);
   return (
     <section className="panel simulations-panel">
       <div className="panel-heading">
-        <div>
-          <span className="eyebrow">Конфигурации</span>
-          <h2>Мои эксперименты</h2>
-        </div>
-        <button
-          className="primary-button"
-          disabled={activeInstruments.length === 0}
-          onClick={() => setEditing("new")}
-          type="button"
-        >
-          Создать эксперимент
-        </button>
+        <div><span className="eyebrow">Конфигурации</span><h2>Мои эксперименты</h2></div>
+        <button className="primary-button" disabled={!canCreate || loading || pending}
+          onClick={() => setEditing("new")} type="button">Создать эксперимент</button>
       </div>
-
-      {error && <div className="form-error">{error}</div>}
-      {activeInstruments.length === 0 && (
-        <div className="notice">
-          Для создания эксперимента администратор должен добавить активный торговый инструмент.
-        </div>
-      )}
-
-      {loading ? (
-        <p className="muted">Загрузка экспериментов…</p>
-      ) : simulations.length === 0 ? (
-        <div className="empty-state">
-          <strong>Сохранённых экспериментов пока нет</strong>
-          <span>Создайте первую конфигурацию рынка и стратегий.</span>
-        </div>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      {pollError && <div className="form-error" role="alert">Автообновление: {pollError}</div>}
+      {!canCreate && <p className="notice">Для создания эксперимента нужен активный торговый инструмент.</p>}
+      {loading ? <p className="muted">Загрузка экспериментов…</p> : simulations.length === 0 ? (
+        <div className="empty-state"><strong>Сохранённых экспериментов пока нет</strong><span>Создайте конфигурацию рынка и стратегий.</span></div>
       ) : (
-        <div className="simulation-grid">
-          {simulations.map((simulation) => {
-            const run = runs[simulation.id];
-            return (
+        <div className="simulation-grid">{simulations.map((simulation) => {
+          const run = runs[simulation.id];
+          return (
             <article className="simulation-card" key={simulation.id}>
-              <div>
-                <span className="user-meta">Эксперимент #{simulation.id}</span>
-                <h3>{simulation.name}</h3>
-              </div>
-              <div className="simulation-meta">
-                <span>{simulation.duration_steps} шагов</span>
-                <span>seed {simulation.seed}</span>
-                <span>
-                  {simulation.background_profiles.reduce(
-                    (sum, profile) => sum + profile.agent_count,
-                    0,
-                  )} участников
-                </span>
-              </div>
-              <div className="chip-list compact">
-                {simulation.instrument_configs.map((config) => (
-                  <span className="plain-chip" key={config.instrument_id}>
-                    {config.instrument?.base_asset.symbol}/
-                    {config.instrument?.quote_asset.symbol}
-                  </span>
-                ))}
-              </div>
-              {run && (
-                <span className="user-meta">
-                  Запуск #{run.id}: {runStatusLabel(run.status)}, шаг {run.current_step}/
-                  {run.total_steps}
-                </span>
-              )}
+              <div><span className="user-meta">Эксперимент #{simulation.id}</span><h3>{simulation.name}</h3></div>
+              <div className="simulation-meta"><span>{simulation.duration_steps} шагов</span><span>seed {simulation.seed}</span>
+                <span>{simulation.background_profiles.reduce((sum, p) => sum + p.agent_count, 0)} фоновых участников</span></div>
+              <div className="chip-list compact">{simulation.instrument_configs.map((config) => (
+                <span className="plain-chip" key={config.instrument_id}>{config.instrument?.base_asset.symbol}/{config.instrument?.quote_asset.symbol}</span>
+              ))}</div>
+              {run && <div className="run-summary"><span className={`run-status ${run.status}`}>{runStatusLabel(run.status)}</span>
+                <span className="user-meta">Запуск #{run.id} · шаг {run.current_step}/{run.total_steps}</span>
+                <progress aria-label="Прогресс запуска" value={run.current_step} max={run.total_steps} />
+                {run.error_message && <span className="negative">{run.error_message}</span>}
+              </div>}
               <div className="card-actions">
-                <button
-                  className="secondary-button"
-                  disabled={run?.status === "running"}
-                  onClick={() => openSimulation(simulation.id)}
-                  type="button"
-                >
-                  Открыть и изменить
-                </button>
+                <button className="secondary-button" disabled={pending || run?.status === "running"}
+                  onClick={() => openSimulation(simulation.id)} type="button">Изменить</button>
+                {run && <button className="secondary-button" disabled={pending}
+                  onClick={() => setMonitoring({ simulation, run })} type="button">Мониторинг и результаты</button>}
                 {run?.status === "running" ? (
-                  <button
-                    className="danger-link"
-                    disabled={runPendingId === simulation.id}
-                    onClick={() => stopRun(simulation.id)}
-                    type="button"
-                  >
-                    Остановить
-                  </button>
-                ) : (
-                  <button
-                    className="primary-button"
-                    disabled={runPendingId === simulation.id}
-                    onClick={() => startRun(simulation.id)}
-                    type="button"
-                  >
-                    Запустить
-                  </button>
-                )}
+                  <button className="danger-link" disabled={pending} onClick={() => stopRun(simulation.id)} type="button">Остановить</button>
+                ) : <button className="primary-button" disabled={pending} onClick={() => startRun(simulation)} type="button">{run ? "Запустить заново" : "Запустить"}</button>}
               </div>
             </article>
-            );
-          })}
-        </div>
+          );
+        })}</div>
       )}
     </section>
   );
 }
 
-
-function runStatusLabel(status: SimulationRun["status"]): string {
-  return {
-    running: "выполняется",
-    stopped: "остановлен",
-    completed: "завершён",
-    failed: "ошибка",
-  }[status];
+function message(cause: unknown): string {
+  return cause instanceof Error ? cause.message : "Не удалось выполнить запрос";
 }
