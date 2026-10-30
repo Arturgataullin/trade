@@ -53,7 +53,9 @@ def list_simulations(db: Session, owner_id: int) -> list[Simulation]:
     return list(db.scalars(statement).unique().all())
 
 
-def get_simulation(db: Session, simulation_id: int, owner_id: int) -> Simulation:
+def get_simulation(
+    db: Session, simulation_id: int, owner_id: int, *, lock: bool = False,
+) -> Simulation:
     statement = (
         select(Simulation)
         .where(
@@ -62,6 +64,8 @@ def get_simulation(db: Session, simulation_id: int, owner_id: int) -> Simulation
         )
         .options(*_simulation_options())
     )
+    if lock:
+        statement = statement.with_for_update(of=Simulation)
     simulation = db.scalar(statement)
     if simulation is None:
         raise SimulationNotFoundError
@@ -87,7 +91,7 @@ def update_simulation(
     owner_id: int,
     data: SimulationWrite,
 ) -> Simulation:
-    simulation = get_simulation(db, simulation_id, owner_id)
+    simulation = get_simulation(db, simulation_id, owner_id, lock=True)
     active_run_id = db.scalar(
         select(SimulationRun.id).where(
             SimulationRun.simulation_id == simulation_id,

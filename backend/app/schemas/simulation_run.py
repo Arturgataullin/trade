@@ -18,5 +18,6 @@ class SimulationRunRead(BaseModel):
     stop_requested: bool
     started_at: datetime
     finished_at: datetime | None
+    error_message: str | None
 
     model_config = ConfigDict(from_attributes=True)

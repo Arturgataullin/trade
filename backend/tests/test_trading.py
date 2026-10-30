@@ -3,6 +3,7 @@ from decimal import Decimal as D
 
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from backend.app.db.base import Base
 from backend.app.models import (
@@ -16,7 +17,9 @@ from backend.app.services.trading import (
 
 class TradingTests(unittest.TestCase):
     def setUp(self):
-        self.engine = create_engine("sqlite://")
+        self.engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
 
         @event.listens_for(self.engine, "connect")
         def enable_foreign_keys(connection, _):

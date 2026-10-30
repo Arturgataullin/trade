@@ -1,9 +1,9 @@
 import hashlib
-from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.models.simulation import (
     BackgroundStrategyProfile,
@@ -20,7 +20,7 @@ from backend.app.schemas.simulation import SimulationRead
 from backend.app.services.simulations import SimulationNotFoundError, get_simulation
 
 
-ENGINE_VERSION = "1"
+ENGINE_VERSION = "2"
 
 
 class SimulationAlreadyRunningError(Exception):
@@ -57,7 +57,7 @@ def start_simulation(
     simulation_id: int,
     owner_id: int,
 ) -> SimulationRun:
-    simulation = get_simulation(db, simulation_id, owner_id)
+    simulation = get_simulation(db, simulation_id, owner_id, lock=True)
     active_run = db.scalar(
         select(SimulationRun).where(
             SimulationRun.simulation_id == simulation_id,
@@ -87,7 +87,13 @@ def start_simulation(
     run.participants = _build_participants(simulation)
 
     db.add(run)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == "uq_simulation_runs_one_running":
+            raise SimulationAlreadyRunningError from exc
+        raise
     return _get_run(db, run.id, owner_id)
 
 
@@ -96,6 +102,8 @@ def stop_simulation(
     simulation_id: int,
     owner_id: int,
 ) -> SimulationRun:
+    from backend.app.services.simulation_execution import finish_run
+
     simulation = get_simulation(db, simulation_id, owner_id)
     run = db.scalar(
         select(SimulationRun)
@@ -104,13 +112,15 @@ def stop_simulation(
             SimulationRun.status == "running",
         )
         .order_by(SimulationRun.id.desc())
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if run is None:
         raise SimulationNotRunningError
 
     run.stop_requested = True
-    run.status = "stopped"
-    run.finished_at = datetime.now(timezone.utc)
+    db.flush()
+    finish_run(db, run, "stopped")
     db.commit()
     db.refresh(run)
     return run

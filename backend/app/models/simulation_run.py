@@ -86,6 +86,7 @@ class SimulationRun(Base):
         nullable=False,
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(String(300))
 
     simulation: Mapped[Simulation] = relationship()
     instruments: Mapped[list[SimulationRunInstrument]] = relationship(
@@ -166,6 +167,7 @@ class SimulationParticipant(Base):
         nullable=False,
     )
     rng_seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    rng_state: Mapped[list | None] = mapped_column(JSON)
     min_order_volume: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
     max_order_volume: Mapped[Decimal] = mapped_column(Numeric(24, 8), nullable=False)
 

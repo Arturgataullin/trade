@@ -140,7 +140,9 @@ def cancel_order(db: Session, run_id: int, order_id: int) -> Order:
     return order
 
 
-def get_order_book(db: Session, run_id: int, instrument_id: int) -> dict[str, list[Order]]:
+def get_order_book(
+    db: Session, run_id: int, instrument_id: int, limit: int | None = None,
+) -> dict[str, list[Order]]:
     common = (
         Order.run_id == run_id,
         Order.instrument_id == instrument_id,
@@ -149,10 +151,10 @@ def get_order_book(db: Session, run_id: int, instrument_id: int) -> dict[str, li
     return {
         "bids": list(db.scalars(select(Order).where(*common, Order.side == "BUY").order_by(
             Order.price.desc(), Order.sequence_number
-        ))),
+        ).limit(limit))),
         "asks": list(db.scalars(select(Order).where(*common, Order.side == "SELL").order_by(
             Order.price, Order.sequence_number
-        ))),
+        ).limit(limit))),
     }
 
 
