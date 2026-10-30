@@ -63,6 +63,7 @@ class ParticipantRead(BaseModel):
 class SimulationResultsRead(BaseModel):
     run_id: int
     status: RunStatus
+    error_message: str | None
     current_step: int
     total_steps: int
     quote_asset_id: int

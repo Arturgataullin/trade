@@ -101,6 +101,7 @@ def stop_simulation(
     db: Session,
     simulation_id: int,
     owner_id: int,
+    expected_run_id: int | None = None,
 ) -> SimulationRun:
     from backend.app.services.simulation_execution import finish_run
 
@@ -115,7 +116,7 @@ def stop_simulation(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if run is None:
+    if run is None or (expected_run_id is not None and run.id != expected_run_id):
         raise SimulationNotRunningError
 
     run.stop_requested = True

@@ -98,6 +98,78 @@ export type SimulationRun = {
   stop_requested: boolean;
   started_at: string;
   finished_at: string | null;
+  error_message: string | null;
+  instrument_ids: number[];
+};
+
+// Pydantic returns Decimal values as strings to preserve their precision.
+export type DecimalValue = string;
+
+export type TradingOrder = {
+  id: number;
+  run_id: number;
+  participant_id: number;
+  instrument_id: number;
+  sequence_number: number;
+  step: number;
+  side: "BUY" | "SELL";
+  status: "open" | "partial" | "filled" | "cancelled" | "rejected";
+  price: DecimalValue;
+  volume: DecimalValue;
+  remaining_volume: DecimalValue;
+  reserved_amount: DecimalValue;
+  rejection_reason: string | null;
+};
+
+export type TradingTrade = {
+  id: number;
+  run_id: number;
+  instrument_id: number;
+  buy_order_id: number;
+  sell_order_id: number;
+  sequence_number: number;
+  step: number;
+  price: DecimalValue;
+  volume: DecimalValue;
+  quote_amount: DecimalValue;
+};
+
+export type OrderBook = {
+  run_id: number;
+  instrument_id: number;
+  last_price: DecimalValue;
+  bids: TradingOrder[];
+  asks: TradingOrder[];
+};
+
+export type ParticipantBalance = {
+  asset_id: number;
+  available: DecimalValue;
+  reserved: DecimalValue;
+};
+
+export type RunParticipant = {
+  id: number;
+  sequence_number: number;
+  participant_type: "background" | "test";
+  balances: ParticipantBalance[];
+};
+
+export type SimulationResults = {
+  run_id: number;
+  status: SimulationRunStatus;
+  error_message: string | null;
+  current_step: number;
+  total_steps: number;
+  quote_asset_id: number;
+  test_participant_id: number;
+  initial_portfolio_value: DecimalValue;
+  portfolio_value: DecimalValue;
+  profit: DecimalValue;
+  return_pct: DecimalValue | null;
+  trade_count: number;
+  test_trade_count: number;
+  balances: ParticipantBalance[];
 };
 
 function errorMessage(payload: unknown, status: number): string {

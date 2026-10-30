@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from backend.app.api.dependencies import CurrentUser, DbSession
 from backend.app.schemas.simulation import SimulationRead, SimulationWrite
@@ -63,9 +63,10 @@ def stop_simulation_run(
     simulation_id: int,
     db: DbSession,
     current_user: CurrentUser,
+    run_id: int | None = Query(default=None, gt=0),
 ) -> SimulationRunRead:
     try:
-        run = stop_simulation(db, simulation_id, current_user.id)
+        run = stop_simulation(db, simulation_id, current_user.id, expected_run_id=run_id)
     except SimulationNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
