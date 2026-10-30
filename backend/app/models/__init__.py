@@ -13,12 +13,14 @@ from backend.app.models.simulation_run import (
     SimulationRunInstrument,
 )
 from backend.app.models.user import User
+from backend.app.models.trading import Order, Trade
 
 
 __all__ = [
     "Asset",
     "BackgroundStrategyProfile",
     "Instrument",
+    "Order",
     "ParticipantBalance",
     "Simulation",
     "SimulationInstrument",
@@ -26,5 +28,6 @@ __all__ = [
     "SimulationRun",
     "SimulationRunInstrument",
     "TestStrategy",
+    "Trade",
     "User",
 ]
