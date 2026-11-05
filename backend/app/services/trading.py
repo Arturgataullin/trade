@@ -101,10 +101,11 @@ def place_order(
             SimulationParticipant.run_id == run_id,
         )
     )
-    return place_order_for_locked_run(
+    order, _ = place_order_for_locked_run(
         db, run, participant, market, side, price, volume, step,
         sequences=load_run_sequences(db, run_id), balances=balances,
     )
+    return order
 
 
 def place_order_for_locked_run(
@@ -119,8 +120,8 @@ def place_order_for_locked_run(
     *,
     sequences: RunSequences,
     balances: RunBalances | None = None,
-) -> Order:
-    """Place an order using objects loaded under the run lock in this session."""
+) -> tuple[Order, list[Trade]]:
+    """Return the placed order and its trades in execution order under the run lock."""
     if run.status != "running" or run.stop_requested:
         raise TradingError("Run is not running")
     if side not in ("BUY", "SELL"):
@@ -168,11 +169,11 @@ def place_order_for_locked_run(
     db.add(order)
     db.flush()
     if order.status == "rejected":
-        return order
+        return order, []
 
-    _match(db, order, market, balances, sequences)
+    trades = _match(db, order, market, balances, sequences)
     db.flush()
-    return order
+    return order, trades
 
 
 def cancel_order(
@@ -234,7 +235,7 @@ def get_price_history(db: Session, run_id: int, instrument_id: int) -> list[Deci
 def _match(
     db: Session, incoming: Order, market: SimulationRunInstrument, balances: RunBalances | None,
     sequences: RunSequences,
-) -> None:
+) -> list[Trade]:
     buying = incoming.side == "BUY"
     statement = select(Order).where(
         Order.run_id == incoming.run_id,
@@ -248,6 +249,7 @@ def _match(
         Order.price.asc() if buying else Order.price.desc(),
         Order.sequence_number,
     ).execution_options(populate_existing=True)
+    trades = []
     for resting in db.scalars(statement):
         if incoming.remaining_volume == 0:
             break
@@ -256,7 +258,9 @@ def _match(
         if _cost(resting.price, volume, ROUND_DOWN) == 0:
             continue
         buy, sell = (incoming, resting) if buying else (resting, incoming)
-        _settle(db, buy, sell, resting.price, volume, market, incoming.step, balances, sequences)
+        trade = _settle(db, buy, sell, resting.price, volume, market, incoming.step, balances, sequences)
+        trades.append(trade)
+    return trades
 
 
 def _settle(
@@ -269,7 +273,7 @@ def _settle(
     step: int,
     balances: RunBalances | None,
     sequences: RunSequences,
-) -> None:
+) -> Trade:
     instrument = market.instrument
     buyer_quote = _balance(db, buy.participant_id, instrument.quote_asset_id, balances)
     buyer_base = _balance(db, buy.participant_id, instrument.base_asset_id, balances)
@@ -295,7 +299,7 @@ def _settle(
     for order in (buy, sell):
         order.status = "filled" if order.remaining_volume == 0 else "partial"
 
-    db.add(Trade(
+    trade = Trade(
         run_id=buy.run_id,
         instrument_id=buy.instrument_id,
         buy_order_id=buy.id,
@@ -305,10 +309,12 @@ def _settle(
         price=price,
         volume=volume,
         quote_amount=quote_amount,
-    ))
+    )
+    db.add(trade)
     market.last_price = price
     # Standalone calls can reload these balances during the next fill.
     db.flush()
+    return trade
 
 
 def _balance(

@@ -76,13 +76,11 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
     )
     history_limit = max(window + 1, 1)
     histories = {}
-    last_sequences = {}
     for market in markets:
-        recent = list(db.execute(select(Trade.sequence_number, Trade.price).where(
+        recent = list(db.scalars(select(Trade.price).where(
             Trade.run_id == run_id, Trade.instrument_id == market.instrument_id
         ).order_by(Trade.sequence_number.desc()).limit(history_limit)))
-        histories[market.instrument_id] = [row.price for row in reversed(recent)]
-        last_sequences[market.instrument_id] = recent[0].sequence_number if recent else 0
+        histories[market.instrument_id] = list(reversed(recent))
 
     step = run.current_step + 1
     for participant in participants:
@@ -110,20 +108,14 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
                 Decimal("0.00000001"), rounding=ROUND_DOWN
             ) == 0:
                 continue
-            place_order_for_locked_run(
+            _, trades = place_order_for_locked_run(
                 db, run, participant, market,
                 decision.action, decision.price, decision.volume, step,
                 sequences=sequences, balances=balances,
             )
-            latest = list(db.execute(select(Trade.sequence_number, Trade.price).where(
-                Trade.run_id == run_id,
-                Trade.instrument_id == market.instrument_id,
-                Trade.sequence_number > last_sequences[market.instrument_id],
-            ).order_by(Trade.sequence_number)))
-            if latest:
-                history.extend(row.price for row in latest)
+            if trades:
+                history.extend(trade.price for trade in trades)
                 del history[:-history_limit]
-                last_sequences[market.instrument_id] = latest[-1].sequence_number
         participant.rng_state = json.loads(json.dumps(rng.getstate()))
         db.flush()
 
