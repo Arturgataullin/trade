@@ -15,19 +15,23 @@ from backend.app.models.simulation_run import (
     SimulationParticipant, SimulationRun, SimulationRunInstrument,
 )
 from backend.app.models.trading import Order, Trade
-from backend.app.services.trading import ACTIVE_STATUSES, cancel_order, lock_run, place_order
+from backend.app.services.trading import (
+    ACTIVE_STATUSES, RunBalances, cancel_order, load_run_balances, lock_run, place_order,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-def finish_run(db: Session, run: SimulationRun, status: str) -> None:
+def finish_run(
+    db: Session, run: SimulationRun, status: str, *, balances: RunBalances | None = None,
+) -> None:
     """Called with the run row locked; the caller owns the transaction."""
     order_ids = list(db.scalars(select(Order.id).where(
         Order.run_id == run.id, Order.status.in_(ACTIVE_STATUSES)
     ).order_by(Order.sequence_number)))
     for order_id in order_ids:
-        cancel_order(db, run.id, order_id)
+        cancel_order(db, run.id, order_id, balances=balances)
     run.status = status
     run.finished_at = datetime.now(timezone.utc)
     db.flush()
@@ -55,6 +59,7 @@ def execute_step(db: Session, run_id: int) -> bool:
     ).order_by(SimulationRunInstrument.instrument_id)))
     if not participants or not markets:
         raise ValueError("Run has no participants or instruments")
+    balances = load_run_balances(db, run_id)
 
     # Only executed prices count toward a Trend Following window.
     window = max(
@@ -101,6 +106,7 @@ def execute_step(db: Session, run_id: int) -> bool:
             place_order(
                 db, run_id, participant.id, market.instrument_id,
                 decision.action, decision.price, decision.volume, step,
+                balances=balances,
             )
             latest = list(db.execute(select(Trade.sequence_number, Trade.price).where(
                 Trade.run_id == run_id,
@@ -117,7 +123,7 @@ def execute_step(db: Session, run_id: int) -> bool:
     run.current_step = step
     db.flush()
     if step == run.total_steps:
-        finish_run(db, run, "completed")
+        finish_run(db, run, "completed", balances=balances)
     return True
 
 

@@ -21,6 +21,7 @@ from backend.app.models.trading import Order, Trade
 QUANTUM = Decimal("0.00000001")
 MAX_AMOUNT = Decimal("10000000000000000")
 ACTIVE_STATUSES = ("open", "partial")
+RunBalances = dict[tuple[int, int], ParticipantBalance]
 
 
 class TradingError(ValueError):
@@ -39,6 +40,17 @@ def lock_run(db: Session, run_id: int) -> SimulationRun:
     return run
 
 
+def load_run_balances(db: Session, run_id: int) -> RunBalances:
+    """Load balances for one step after locking the run in this session."""
+    balances = db.scalars(
+        select(ParticipantBalance)
+        .join(SimulationParticipant, SimulationParticipant.id == ParticipantBalance.participant_id)
+        .where(SimulationParticipant.run_id == run_id)
+        .execution_options(populate_existing=True)
+    )
+    return {(balance.participant_id, balance.asset_id): balance for balance in balances}
+
+
 def place_order(
     db: Session,
     run_id: int,
@@ -48,6 +60,8 @@ def place_order(
     price: Decimal,
     volume: Decimal,
     step: int,
+    *,
+    balances: RunBalances | None = None,
 ) -> Order:
     run = lock_run(db, run_id)
     if run.status != "running" or run.stop_requested:
@@ -75,7 +89,7 @@ def place_order(
 
     instrument = market.instrument
     asset_id = instrument.quote_asset_id if side == "BUY" else instrument.base_asset_id
-    balance = _balance(db, participant_id, asset_id)
+    balance = _balance(db, participant_id, asset_id, balances)
     reserve = _buy_reserve(price, volume) if side == "BUY" else volume
     if _cost(price, volume, ROUND_DOWN) == 0:
         raise TradingError("Order value must be at least 0.00000001")
@@ -108,12 +122,14 @@ def place_order(
     if order.status == "rejected":
         return order
 
-    _match(db, order, market)
+    _match(db, order, market, balances)
     db.flush()
     return order
 
 
-def cancel_order(db: Session, run_id: int, order_id: int) -> Order:
+def cancel_order(
+    db: Session, run_id: int, order_id: int, *, balances: RunBalances | None = None,
+) -> Order:
     lock_run(db, run_id)
     order = db.scalar(select(Order).where(
         Order.id == order_id, Order.run_id == run_id
@@ -131,7 +147,7 @@ def cancel_order(db: Session, run_id: int, order_id: int) -> Order:
     )
     instrument = market.instrument
     asset_id = instrument.quote_asset_id if order.side == "BUY" else instrument.base_asset_id
-    balance = _balance(db, order.participant_id, asset_id)
+    balance = _balance(db, order.participant_id, asset_id, balances)
     balance.reserved -= order.reserved_amount
     balance.available += order.reserved_amount
     order.reserved_amount = Decimal("0")
@@ -167,7 +183,9 @@ def get_price_history(db: Session, run_id: int, instrument_id: int) -> list[Deci
     ))
 
 
-def _match(db: Session, incoming: Order, market: SimulationRunInstrument) -> None:
+def _match(
+    db: Session, incoming: Order, market: SimulationRunInstrument, balances: RunBalances | None,
+) -> None:
     buying = incoming.side == "BUY"
     statement = select(Order).where(
         Order.run_id == incoming.run_id,
@@ -189,7 +207,7 @@ def _match(db: Session, incoming: Order, market: SimulationRunInstrument) -> Non
         if _cost(resting.price, volume, ROUND_DOWN) == 0:
             continue
         buy, sell = (incoming, resting) if buying else (resting, incoming)
-        _settle(db, buy, sell, resting.price, volume, market, incoming.step)
+        _settle(db, buy, sell, resting.price, volume, market, incoming.step, balances)
 
 
 def _settle(
@@ -200,12 +218,13 @@ def _settle(
     volume: Decimal,
     market: SimulationRunInstrument,
     step: int,
+    balances: RunBalances | None,
 ) -> None:
     instrument = market.instrument
-    buyer_quote = _balance(db, buy.participant_id, instrument.quote_asset_id)
-    buyer_base = _balance(db, buy.participant_id, instrument.base_asset_id)
-    seller_quote = _balance(db, sell.participant_id, instrument.quote_asset_id)
-    seller_base = _balance(db, sell.participant_id, instrument.base_asset_id)
+    buyer_quote = _balance(db, buy.participant_id, instrument.quote_asset_id, balances)
+    buyer_base = _balance(db, buy.participant_id, instrument.base_asset_id, balances)
+    seller_quote = _balance(db, sell.participant_id, instrument.quote_asset_id, balances)
+    seller_base = _balance(db, sell.participant_id, instrument.base_asset_id, balances)
 
     # Settlement is rounded down to the quote asset's 8 decimal places.
     # Reservation rounds up, so even partial fills remain fully funded.
@@ -242,11 +261,16 @@ def _settle(
     db.flush()
 
 
-def _balance(db: Session, participant_id: int, asset_id: int) -> ParticipantBalance:
-    balance = db.scalar(select(ParticipantBalance).where(
-        ParticipantBalance.participant_id == participant_id,
-        ParticipantBalance.asset_id == asset_id,
-    ).execution_options(populate_existing=True))
+def _balance(
+    db: Session, participant_id: int, asset_id: int, balances: RunBalances | None,
+) -> ParticipantBalance:
+    if balances is not None:
+        balance = balances.get((participant_id, asset_id))
+    else:
+        balance = db.scalar(select(ParticipantBalance).where(
+            ParticipantBalance.participant_id == participant_id,
+            ParticipantBalance.asset_id == asset_id,
+        ).execution_options(populate_existing=True))
     if balance is None:
         raise TradingError("Participant balance is missing")
     return balance
