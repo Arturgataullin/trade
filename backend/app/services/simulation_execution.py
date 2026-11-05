@@ -8,7 +8,7 @@ from random import Random
 from threading import Event, Thread
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from backend.app.engine.strategies import StrategyDecision, decide
 from backend.app.models.simulation_run import (
@@ -16,7 +16,8 @@ from backend.app.models.simulation_run import (
 )
 from backend.app.models.trading import Order, Trade
 from backend.app.services.trading import (
-    ACTIVE_STATUSES, RunBalances, cancel_order, load_run_balances, lock_run, place_order,
+    ACTIVE_STATUSES, RunBalances, cancel_order, load_run_balances, lock_run,
+    place_order_for_locked_run,
 )
 
 
@@ -39,7 +40,11 @@ def finish_run(
 
 def execute_step(db: Session, run_id: int) -> bool:
     """Return True when a step was processed. Commit/rollback is caller-owned."""
-    run = lock_run(db, run_id)
+    return _execute_locked_step(db, lock_run(db, run_id))
+
+
+def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
+    run_id = run.id
     if run.status != "running":
         return False
     if run.engine_version != "2":
@@ -56,7 +61,8 @@ def execute_step(db: Session, run_id: int) -> bool:
     ).order_by(SimulationParticipant.sequence_number)))
     markets = list(db.scalars(select(SimulationRunInstrument).where(
         SimulationRunInstrument.run_id == run_id
-    ).order_by(SimulationRunInstrument.instrument_id)))
+    ).options(joinedload(SimulationRunInstrument.instrument))
+      .order_by(SimulationRunInstrument.instrument_id)))
     if not participants or not markets:
         raise ValueError("Run has no participants or instruments")
     balances = load_run_balances(db, run_id)
@@ -103,8 +109,8 @@ def execute_step(db: Session, run_id: int) -> bool:
                 Decimal("0.00000001"), rounding=ROUND_DOWN
             ) == 0:
                 continue
-            place_order(
-                db, run_id, participant.id, market.instrument_id,
+            place_order_for_locked_run(
+                db, run, participant, market,
                 decision.action, decision.price, decision.volume, step,
                 balances=balances,
             )
@@ -140,7 +146,7 @@ def process_next_run(session_factory) -> bool:
             # A savepoint rolls back an entire failed step, including its RNG state.
             try:
                 with db.begin_nested():
-                    execute_step(db, run.id)
+                    _execute_locked_step(db, run)
             except Exception:
                 logger.exception("Simulation run %s failed", run.id)
                 run = lock_run(db, run.id)

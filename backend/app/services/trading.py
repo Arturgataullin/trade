@@ -64,14 +64,6 @@ def place_order(
     balances: RunBalances | None = None,
 ) -> Order:
     run = lock_run(db, run_id)
-    if run.status != "running" or run.stop_requested:
-        raise TradingError("Run is not running")
-    if side not in ("BUY", "SELL"):
-        raise TradingError("Side must be BUY or SELL")
-    if step < run.current_step or step > run.total_steps:
-        raise TradingError("Invalid model step")
-    price = _positive_amount(price)
-    volume = _positive_amount(volume)
     market = db.scalar(
         select(SimulationRunInstrument).where(
             SimulationRunInstrument.run_id == run_id,
@@ -84,12 +76,41 @@ def place_order(
             SimulationParticipant.run_id == run_id,
         )
     )
-    if market is None or participant is None:
+    return place_order_for_locked_run(
+        db, run, participant, market, side, price, volume, step, balances=balances,
+    )
+
+
+def place_order_for_locked_run(
+    db: Session,
+    run: SimulationRun,
+    participant: SimulationParticipant | None,
+    market: SimulationRunInstrument | None,
+    side: str,
+    price: Decimal,
+    volume: Decimal,
+    step: int,
+    *,
+    balances: RunBalances | None = None,
+) -> Order:
+    """Place an order using objects loaded under the run lock in this session."""
+    if run.status != "running" or run.stop_requested:
+        raise TradingError("Run is not running")
+    if side not in ("BUY", "SELL"):
+        raise TradingError("Side must be BUY or SELL")
+    if step < run.current_step or step > run.total_steps:
+        raise TradingError("Invalid model step")
+    price = _positive_amount(price)
+    volume = _positive_amount(volume)
+    if (
+        market is None or market.run_id != run.id
+        or participant is None or participant.run_id != run.id
+    ):
         raise TradingError("Participant and instrument must belong to the run")
 
     instrument = market.instrument
     asset_id = instrument.quote_asset_id if side == "BUY" else instrument.base_asset_id
-    balance = _balance(db, participant_id, asset_id, balances)
+    balance = _balance(db, participant.id, asset_id, balances)
     reserve = _buy_reserve(price, volume) if side == "BUY" else volume
     if _cost(price, volume, ROUND_DOWN) == 0:
         raise TradingError("Order value must be at least 0.00000001")
@@ -97,10 +118,10 @@ def place_order(
         raise TradingError("Order value exceeds balance precision")
 
     order = Order(
-        run_id=run_id,
-        participant_id=participant_id,
-        instrument_id=instrument_id,
-        sequence_number=_next_sequence(db, Order, run_id),
+        run_id=run.id,
+        participant_id=participant.id,
+        instrument_id=market.instrument_id,
+        sequence_number=_next_sequence(db, Order, run.id),
         step=step,
         side=side,
         status="open",
