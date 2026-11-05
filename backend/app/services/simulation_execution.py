@@ -16,7 +16,7 @@ from backend.app.models.simulation_run import (
 )
 from backend.app.models.trading import Order, Trade
 from backend.app.services.trading import (
-    ACTIVE_STATUSES, RunBalances, cancel_order, load_run_balances, lock_run,
+    ACTIVE_STATUSES, RunBalances, cancel_order, load_run_balances, load_run_sequences, lock_run,
     place_order_for_locked_run,
 )
 
@@ -66,6 +66,7 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
     if not participants or not markets:
         raise ValueError("Run has no participants or instruments")
     balances = load_run_balances(db, run_id)
+    sequences = load_run_sequences(db, run_id)
 
     # Only executed prices count toward a Trend Following window.
     window = max(
@@ -112,7 +113,7 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
             place_order_for_locked_run(
                 db, run, participant, market,
                 decision.action, decision.price, decision.volume, step,
-                balances=balances,
+                sequences=sequences, balances=balances,
             )
             latest = list(db.execute(select(Trade.sequence_number, Trade.price).where(
                 Trade.run_id == run_id,

@@ -4,6 +4,7 @@ All writers must lock the run first, including the simulation worker and stop
 handler. PostgreSQL serializes operations within a run through this row lock.
 """
 
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_DOWN, localcontext
 
 from sqlalchemy import func, select
@@ -28,6 +29,20 @@ class TradingError(ValueError):
     """Invalid trading operation; the caller should roll back the transaction."""
 
 
+@dataclass
+class RunSequences:
+    last_order: int
+    last_trade: int
+
+    def next_order(self) -> int:
+        self.last_order += 1
+        return self.last_order
+
+    def next_trade(self) -> int:
+        self.last_trade += 1
+        return self.last_trade
+
+
 def lock_run(db: Session, run_id: int) -> SimulationRun:
     run = db.scalar(
         select(SimulationRun)
@@ -49,6 +64,16 @@ def load_run_balances(db: Session, run_id: int) -> RunBalances:
         .execution_options(populate_existing=True)
     )
     return {(balance.participant_id, balance.asset_id): balance for balance in balances}
+
+
+def load_run_sequences(db: Session, run_id: int) -> RunSequences:
+    """Initialize counters under the run lock for this step or standalone order."""
+    last_order = select(func.max(Order.sequence_number)).where(Order.run_id == run_id)
+    last_trade = select(func.max(Trade.sequence_number)).where(Trade.run_id == run_id)
+    order_number, trade_number = db.execute(select(
+        last_order.scalar_subquery(), last_trade.scalar_subquery(),
+    )).one()
+    return RunSequences(order_number or 0, trade_number or 0)
 
 
 def place_order(
@@ -77,7 +102,8 @@ def place_order(
         )
     )
     return place_order_for_locked_run(
-        db, run, participant, market, side, price, volume, step, balances=balances,
+        db, run, participant, market, side, price, volume, step,
+        sequences=load_run_sequences(db, run_id), balances=balances,
     )
 
 
@@ -91,6 +117,7 @@ def place_order_for_locked_run(
     volume: Decimal,
     step: int,
     *,
+    sequences: RunSequences,
     balances: RunBalances | None = None,
 ) -> Order:
     """Place an order using objects loaded under the run lock in this session."""
@@ -121,7 +148,7 @@ def place_order_for_locked_run(
         run_id=run.id,
         participant_id=participant.id,
         instrument_id=market.instrument_id,
-        sequence_number=_next_sequence(db, Order, run.id),
+        sequence_number=sequences.next_order(),
         step=step,
         side=side,
         status="open",
@@ -143,7 +170,7 @@ def place_order_for_locked_run(
     if order.status == "rejected":
         return order
 
-    _match(db, order, market, balances)
+    _match(db, order, market, balances, sequences)
     db.flush()
     return order
 
@@ -206,6 +233,7 @@ def get_price_history(db: Session, run_id: int, instrument_id: int) -> list[Deci
 
 def _match(
     db: Session, incoming: Order, market: SimulationRunInstrument, balances: RunBalances | None,
+    sequences: RunSequences,
 ) -> None:
     buying = incoming.side == "BUY"
     statement = select(Order).where(
@@ -228,7 +256,7 @@ def _match(
         if _cost(resting.price, volume, ROUND_DOWN) == 0:
             continue
         buy, sell = (incoming, resting) if buying else (resting, incoming)
-        _settle(db, buy, sell, resting.price, volume, market, incoming.step, balances)
+        _settle(db, buy, sell, resting.price, volume, market, incoming.step, balances, sequences)
 
 
 def _settle(
@@ -240,6 +268,7 @@ def _settle(
     market: SimulationRunInstrument,
     step: int,
     balances: RunBalances | None,
+    sequences: RunSequences,
 ) -> None:
     instrument = market.instrument
     buyer_quote = _balance(db, buy.participant_id, instrument.quote_asset_id, balances)
@@ -271,14 +300,14 @@ def _settle(
         instrument_id=buy.instrument_id,
         buy_order_id=buy.id,
         sell_order_id=sell.id,
-        sequence_number=_next_sequence(db, Trade, buy.run_id),
+        sequence_number=sequences.next_trade(),
         step=step,
         price=price,
         volume=volume,
         quote_amount=quote_amount,
     ))
     market.last_price = price
-    # Make each execution visible to the next sequence query with autoflush=False.
+    # Standalone calls can reload these balances during the next fill.
     db.flush()
 
 
@@ -295,10 +324,6 @@ def _balance(
     if balance is None:
         raise TradingError("Participant balance is missing")
     return balance
-
-
-def _next_sequence(db: Session, model: type[Order] | type[Trade], run_id: int) -> int:
-    return (db.scalar(select(func.max(model.sequence_number)).where(model.run_id == run_id)) or 0) + 1
 
 
 def _positive_amount(value: Decimal) -> Decimal:
