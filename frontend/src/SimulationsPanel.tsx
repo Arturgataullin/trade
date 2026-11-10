@@ -69,11 +69,13 @@ export function SimulationsPanel({ token, instruments }: { token: string; instru
     finally { setPending(false); }
   }
 
-  async function stopRun(simulationId: number) {
+  async function stopRun(run: SimulationRun) {
     setPending(true);
     setError("");
     try {
-      updateRun(await apiRequest<SimulationRun>(`/api/simulations/${simulationId}/stop`, { method: "POST" }, token));
+      updateRun(await apiRequest<SimulationRun>(
+        `/api/simulations/${run.simulation_id}/stop?run_id=${run.id}`, { method: "POST" }, token,
+      ));
     } catch (cause) { setError(message(cause)); }
     finally { setPending(false); }
   }
@@ -133,7 +135,7 @@ export function SimulationsPanel({ token, instruments }: { token: string; instru
                 {run && <button className="secondary-button" disabled={pending}
                   onClick={() => setMonitoring({ simulation, run })} type="button">Мониторинг и результаты</button>}
                 {run?.status === "running" ? (
-                  <button className="danger-link" disabled={pending} onClick={() => stopRun(simulation.id)} type="button">Остановить</button>
+                  <button className="danger-link" disabled={pending} onClick={() => stopRun(run)} type="button">Остановить</button>
                 ) : <button className="primary-button" disabled={pending} onClick={() => startRun(simulation)} type="button">{run ? "Запустить заново" : "Запустить"}</button>}
               </div>
             </article>
