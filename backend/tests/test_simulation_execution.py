@@ -1,11 +1,12 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal as D
 from unittest.mock import patch
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.app.models import Order, SimulationParticipant, SimulationRun, Trade
+from backend.app.models import Order, Simulation, SimulationParticipant, SimulationRun, Trade
 from backend.app.services.simulation_execution import execute_step, process_next_run
 from backend.app.services.simulation_results import calculate_results, get_owned_run
 from backend.app.services.simulation_runs import stop_simulation
@@ -88,6 +89,29 @@ class SimulationExecutionTests(unittest.TestCase):
         self.assertEqual(orders[0].status, "filled")
         self.assertEqual(orders[2].status, "filled")
         self.assertEqual(orders[4].status, "open")
+
+    def test_older_waiting_run_is_selected_before_a_new_run(self):
+        self.assertTrue(process_next_run(self.factory))
+        self.db.expire_all()
+        old_run = self.db.get(SimulationRun, 1)
+        self.assertEqual(old_run.current_step, 1)
+        self.assertIsNotNone(old_run.last_step_at)
+        original = self.db.get(Simulation, 1)
+        config = {column.key: getattr(original, column.key)
+                  for column in Simulation.__table__.columns if column.key != "id"}
+        simulation = Simulation(**config)
+        self.db.add(simulation)
+        self.db.flush()
+        self.db.add(SimulationRun(
+            simulation_id=simulation.id, seed=42, total_steps=3, engine_version="2",
+            configuration_snapshot={}, started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+        ))
+        self.db.commit()
+
+        self.assertTrue(process_next_run(self.factory))
+        self.db.expire_all()
+        self.assertEqual(old_run.current_step, 2)
+        self.assertEqual(self.db.get(SimulationRun, 2).current_step, 0)
 
     def test_rollback_restores_rng_progress_orders_and_balances(self):
         execute_step(self.db, 1)

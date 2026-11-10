@@ -5,9 +5,8 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from random import Random
-from threading import Event, Thread
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from backend.app.engine.strategies import StrategyDecision, decide
@@ -120,6 +119,7 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
         db.flush()
 
     run.current_step = step
+    run.last_step_at = datetime.now(timezone.utc)
     db.flush()
     if step == run.total_steps:
         finish_run(db, run, "completed", balances=balances)
@@ -132,7 +132,10 @@ def process_next_run(session_factory) -> bool:
         with db.begin():
             run = db.scalar(select(SimulationRun).where(
                 SimulationRun.status == "running"
-            ).order_by(SimulationRun.current_step, SimulationRun.id)
+            ).order_by(
+                func.coalesce(SimulationRun.last_step_at, SimulationRun.started_at),
+                SimulationRun.id,
+            )
               .with_for_update(skip_locked=True).limit(1))
             if run is None:
                 return False
@@ -148,26 +151,13 @@ def process_next_run(session_factory) -> bool:
     return True
 
 
-class SimulationWorker:
-    def __init__(self, session_factory):
-        self.session_factory = session_factory
-        self.shutdown = Event()
-        self.thread = Thread(target=self._loop, name="simulation-worker", daemon=True)
-
-    def start(self):
-        self.thread.start()
-
-    def stop(self):
-        self.shutdown.set()
-        self.thread.join()
-
-    def _loop(self):
-        while not self.shutdown.is_set():
-            try:
-                processed = process_next_run(self.session_factory)
-            except Exception:
-                logger.exception("Simulation worker database operation failed")
-                self.shutdown.wait(2)
-                continue
-            if not processed:
-                self.shutdown.wait(0.2)
+def run_worker(session_factory, shutdown) -> None:
+    while not shutdown.is_set():
+        try:
+            processed = process_next_run(session_factory)
+        except Exception:
+            logger.exception("Simulation worker database operation failed")
+            shutdown.wait(2)
+            continue
+        if not processed:
+            shutdown.wait(0.2)

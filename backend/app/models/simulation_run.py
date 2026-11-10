@@ -86,6 +86,7 @@ class SimulationRun(Base):
         nullable=False,
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_step_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(String(300))
 
     simulation: Mapped[Simulation] = relationship()
