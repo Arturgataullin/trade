@@ -307,7 +307,8 @@ export function SimulationForm({
                   </label>
                   <NumberField
                     label="Начальная цена"
-                    min={0.00000001}
+                    min={0.01}
+                    step={0.01}
                     onChange={(value) =>
                       updateInstrument(index, { initial_price: value })
                     }

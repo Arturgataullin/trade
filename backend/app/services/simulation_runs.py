@@ -1,5 +1,5 @@
 import hashlib
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ from backend.app.schemas.simulation import SimulationRead
 from backend.app.services.simulations import SimulationNotFoundError, get_simulation
 
 
-ENGINE_VERSION = "2"
+ENGINE_VERSION = "3"
 
 
 class SimulationAlreadyRunningError(Exception):
@@ -79,8 +79,8 @@ def start_simulation(
     run.instruments = [
         SimulationRunInstrument(
             instrument_id=config.instrument_id,
-            initial_price=config.initial_price,
-            last_price=config.initial_price,
+            initial_price=_cent_price(config.initial_price),
+            last_price=_cent_price(config.initial_price),
         )
         for config in simulation.instrument_configs
     ]
@@ -95,6 +95,10 @@ def start_simulation(
             raise SimulationAlreadyRunningError from exc
         raise
     return _get_run(db, run.id, owner_id)
+
+
+def _cent_price(value: Decimal) -> Decimal:
+    return max(Decimal("0.01"), value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def stop_simulation(

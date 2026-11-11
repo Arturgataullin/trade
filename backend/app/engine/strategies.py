@@ -8,6 +8,7 @@ Action = Literal["BUY", "SELL", "HOLD"]
 StrategyType = Literal["random", "trend_following"]
 
 MONEY_QUANTUM = Decimal("0.00000001")
+PRICE_TICK = Decimal("0.01")
 PERCENT = Decimal("100")
 
 
@@ -29,6 +30,7 @@ def decide(
     min_order_volume: Decimal,
     max_order_volume: Decimal,
     rng: Random,
+    price_quantum: Decimal = MONEY_QUANTUM,
 ) -> StrategyDecision:
     _validate_common_inputs(
         price_history,
@@ -43,6 +45,7 @@ def decide(
             min_order_volume,
             max_order_volume,
             rng,
+            price_quantum,
         )
     if strategy_type == "trend_following":
         return trend_following_decision(
@@ -51,6 +54,7 @@ def decide(
             min_order_volume,
             max_order_volume,
             rng,
+            price_quantum,
         )
     raise InvalidStrategyParametersError(
         f"Unsupported strategy type: {strategy_type}"
@@ -63,6 +67,7 @@ def random_decision(
     min_order_volume: Decimal,
     max_order_volume: Decimal,
     rng: Random,
+    price_quantum: Decimal = MONEY_QUANTUM,
 ) -> StrategyDecision:
     buy_probability = _required_decimal(parameters, "buy_probability")
     sell_probability = _required_decimal(parameters, "sell_probability")
@@ -92,8 +97,8 @@ def random_decision(
         direction * price_deviation_pct / PERCENT
     )
     price = max(
-        MONEY_QUANTUM,
-        _quantize(last_price * price_multiplier),
+        price_quantum,
+        (last_price * price_multiplier).quantize(price_quantum, rounding=ROUND_HALF_UP),
     )
     volume = _random_volume(min_order_volume, max_order_volume, rng)
     return StrategyDecision(action=action, price=price, volume=volume)
@@ -105,6 +110,7 @@ def trend_following_decision(
     min_order_volume: Decimal,
     max_order_volume: Decimal,
     rng: Random,
+    price_quantum: Decimal = MONEY_QUANTUM,
 ) -> StrategyDecision:
     trend_window = _required_int(parameters, "trend_window")
     threshold_pct = _required_decimal(parameters, "trend_threshold_pct")
@@ -131,7 +137,7 @@ def trend_following_decision(
 
     return StrategyDecision(
         action=action,
-        price=_quantize(current_price),
+        price=current_price.quantize(price_quantum, rounding=ROUND_HALF_UP),
         volume=_random_volume(min_order_volume, max_order_volume, rng),
     )
 

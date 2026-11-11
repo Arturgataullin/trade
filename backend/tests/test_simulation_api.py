@@ -83,7 +83,7 @@ class SimulationApiTests(unittest.TestCase):
         url = f"/api/simulations/{simulation['id']}"
         status, run = self.request("POST", url + "/start", self.token)
         self.assertEqual(status, 201)
-        self.assertEqual(run["engine_version"], "2")
+        self.assertEqual(run["engine_version"], "3")
         self.assertEqual(self.request("POST", url + "/start", self.token)[0], 409)
         self.assertEqual(self.request("PUT", url, self.token, config)[0], 409)
         self.fixture.run_all()

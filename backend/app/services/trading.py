@@ -129,6 +129,8 @@ def place_order_for_locked_run(
     if step < run.current_step or step > run.total_steps:
         raise TradingError("Invalid model step")
     price = _positive_amount(price)
+    if run.engine_version == "3" and price != price.quantize(Decimal("0.01")):
+        raise TradingError("Price must be a multiple of 0.01")
     volume = _positive_amount(volume)
     if (
         market is None or market.run_id != run.id

@@ -9,7 +9,7 @@ from random import Random
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from backend.app.engine.strategies import StrategyDecision, decide
+from backend.app.engine.strategies import MONEY_QUANTUM, PRICE_TICK, StrategyDecision, decide
 from backend.app.models.simulation_run import (
     SimulationParticipant, SimulationRun, SimulationRunInstrument,
 )
@@ -46,7 +46,7 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
     run_id = run.id
     if run.status != "running":
         return False
-    if run.engine_version != "2":
+    if run.engine_version not in ("2", "3"):
         raise ValueError("Run uses an unsupported engine version; start a new run")
     if run.stop_requested:
         finish_run(db, run, "stopped")
@@ -99,6 +99,7 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
                     participant.min_order_volume,
                     participant.max_order_volume,
                     rng,
+                    price_quantum=PRICE_TICK if run.engine_version == "3" else MONEY_QUANTUM,
                 )
             if decision.action == "HOLD":
                 continue

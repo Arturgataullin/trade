@@ -22,6 +22,16 @@ TREND_PARAMETERS = {
 
 
 class StrategyTests(unittest.TestCase):
+    def test_new_price_tick_keeps_volume_precision(self) -> None:
+        decision = decide(
+            "random", {"buy_probability": 100, "sell_probability": 0,
+                       "hold_probability": 0, "price_deviation_pct": 1},
+            [Decimal("58.12345678")], Decimal("0.12345678"),
+            Decimal("0.12345678"), Random(42), price_quantum=Decimal("0.01"),
+        )
+        self.assertEqual(decision.price, decision.price.quantize(Decimal("0.01")))
+        self.assertEqual(decision.volume, Decimal("0.12345678"))
+
     def test_random_strategy_is_reproducible_for_same_seed(self) -> None:
         first = decide(
             "random",

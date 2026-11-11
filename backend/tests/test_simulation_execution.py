@@ -81,6 +81,17 @@ class SimulationExecutionTests(unittest.TestCase):
                 self.assertEqual(self.fixture.balance(p, asset).reserved, 0)
         self.fixture.assert_conserved()
 
+    def test_new_run_prices_use_cents(self):
+        self.fixture.run.engine_version = "3"
+        self.db.commit()
+        self.run_all()
+        orders = list(self.db.scalars(select(Order)))
+        trades = list(self.db.scalars(select(Trade)))
+        self.assertTrue(orders)
+        self.assertTrue(all(o.price == o.price.quantize(D("0.01")) for o in orders))
+        self.assertTrue(all(t.price == t.price.quantize(D("0.01")) for t in trades))
+        self.fixture.assert_conserved()
+
     def test_step_uses_previous_participants_trades_immediately(self):
         execute_step(self.db, 1)
         self.db.commit()
