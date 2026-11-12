@@ -123,6 +123,9 @@ npm --prefix frontend run dev
 
 ## Просмотр содержимого базы данных
 
+docker compose exec db psql -U exchange_user -d exchange_simulator
+TRUNCATE TABLE simulations RESTART IDENTITY CASCADE;
+
 PostgreSQL работает внутри контейнера `db`. Чтобы открыть интерактивную консоль
 `psql`, выполните из корня проекта:
 

@@ -51,7 +51,6 @@ def get_latest_run(
     )
     return db.scalars(statement).first()
 
-
 def start_simulation(
     db: Session,
     simulation_id: int,

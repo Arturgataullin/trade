@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from random import Random
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from backend.app.engine.strategies import MONEY_QUANTUM, PRICE_TICK, StrategyDecision, decide
+from backend.app.models.instrument import Instrument
 from backend.app.models.simulation_run import (
     SimulationParticipant, SimulationRun, SimulationRunInstrument,
 )
@@ -40,6 +41,28 @@ def finish_run(
 def execute_step(db: Session, run_id: int) -> bool:
     """Return True when a step was processed. Commit/rollback is caller-owned."""
     return _execute_locked_step(db, lock_run(db, run_id))
+
+
+def _check_reserves(db: Session, run_id: int, balances: RunBalances) -> None:
+    """Each balance reserve must equal the sum held by its active orders."""
+    asset_id = case(
+        (Order.side == "BUY", Instrument.quote_asset_id),
+        else_=Instrument.base_asset_id,
+    )
+    expected = {
+        (participant_id, asset): amount
+        for participant_id, asset, amount in db.execute(
+            select(Order.participant_id, asset_id, func.sum(Order.reserved_amount))
+            .join(Instrument, Instrument.id == Order.instrument_id)
+            .where(Order.run_id == run_id, Order.status.in_(ACTIVE_STATUSES))
+            .group_by(Order.participant_id, asset_id)
+        )
+    }
+    for key, balance in balances.items():
+        if balance.reserved != expected.pop(key, Decimal("0")):
+            raise ValueError(f"Reserve mismatch for participant {key[0]}, asset {key[1]}")
+    if expected:
+        raise ValueError(f"Active orders have no balance for participant/asset {next(iter(expected))}")
 
 
 def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
@@ -124,6 +147,7 @@ def _execute_locked_step(db: Session, run: SimulationRun) -> bool:
     db.flush()
     if step == run.total_steps:
         finish_run(db, run, "completed", balances=balances)
+    _check_reserves(db, run_id, balances)
     return True
 
 
